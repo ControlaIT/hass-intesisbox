@@ -35,6 +35,11 @@ from .intesisbox import IntesisBox
 
 _LOGGER = logging.getLogger(__name__)
 
+# Home Assistant 2026.11 moved climate temperatures to native_* members; the
+# old names log a deprecation warning and stop working in 2027.11. Older cores
+# only know the old names. Detect the API rather than compare versions.
+_HAS_NATIVE_TEMPERATURE = hasattr(ClimateEntity, "native_target_temperature")
+
 DEFAULT_NAME = "Intesisbox"
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -194,9 +199,41 @@ class IntesisBoxAC(ClimateEntity):
         return self._unique_id
 
     @property
-    def temperature_unit(self):
+    def native_temperature_unit(self):
         """Intesisbox API uses celsius on the backend."""
         return UnitOfTemperature.CELSIUS
+
+    @property
+    def native_current_temperature(self):
+        """Return the current temperature."""
+        return self._current_temp
+
+    @property
+    def native_target_temperature(self):
+        """Return the current setpoint temperature if unit is on and not FAN or OFF Mode."""
+        if self._power and self.hvac_mode not in [HVACMode.FAN_ONLY, HVACMode.OFF]:
+            return self._target_temperature
+        return None
+
+    if not _HAS_NATIVE_TEMPERATURE:
+        # Cores before 2026.11 read these names. They are only defined there,
+        # so newer cores see no deprecated member. Remove once 2026.11 is the
+        # minimum supported version.
+
+        @property
+        def temperature_unit(self):
+            """Return the unit, for cores without native_* support."""
+            return self.native_temperature_unit
+
+        @property
+        def current_temperature(self):
+            """Return the current temperature, for cores without native_*."""
+            return self.native_current_temperature
+
+        @property
+        def target_temperature(self):
+            """Return the setpoint, for cores without native_* support."""
+            return self.native_target_temperature
 
     @property
     def device_info(self):
@@ -405,23 +442,11 @@ class IntesisBoxAC(ClimateEntity):
         return self._connected or self._connection_retries < 2
 
     @property
-    def current_temperature(self):
-        """Return the current temperature."""
-        return self._current_temp
-
-    @property
     def hvac_mode(self):
         """Return the current mode of operation if unit is on."""
         if self._power:
             return self._current_operation
         return HVACMode.OFF
-
-    @property
-    def target_temperature(self):
-        """Return the current setpoint temperature if unit is on and not FAN or OFF Mode."""
-        if self._power and self.hvac_mode not in [HVACMode.FAN_ONLY, HVACMode.OFF]:
-            return self._target_temperature
-        return None
 
     @property
     def supported_features(self):

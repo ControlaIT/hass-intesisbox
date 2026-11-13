@@ -102,6 +102,7 @@ async def test_entry_stores_the_controller_and_sets_up_the_climate(hass):
     assert state.attributes["friendly_name"] == MAC
     assert state.state == "cool"
     assert state.attributes["current_temperature"] == 24.5
+    assert state.attributes["temperature"] == 21.0
     assert er.async_get(hass).async_get("climate.001dc9a2c911").device_id == device.id
 
 
