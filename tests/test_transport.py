@@ -244,3 +244,32 @@ def test_short_id_reply_does_not_count_as_connected(caplog):
     assert box.device_mac_address is None
     assert not box.is_connected
     assert not intesisbox.background_tasks
+
+
+async def test_connect_after_stop_does_not_reconnect(port, monkeypatch):
+    """A stopped controller must stay stopped when something calls connect().
+
+    On unload, stop() closes the socket, connection_lost notifies the entity
+    being removed, and its update calls connect() a few seconds later. That
+    used to reconnect the controller, leaving an orphan connection that held
+    one of the device's two TCP slots.
+    """
+    box = await _connect_and_handshake(port)
+    box.stop()
+    await _wait_until(lambda: box.is_disconnected)
+
+    loop = asyncio.get_running_loop()
+    attempts = []
+    real_create_connection = loop.create_connection
+
+    def counting_create_connection(*args: Any, **kwargs: Any):
+        attempts.append(args)
+        return real_create_connection(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "create_connection", counting_create_connection)
+    box.connect()
+    await asyncio.sleep(1.5)
+
+    assert attempts == []
+    assert not box.is_connected
+    await _reap_tasks()

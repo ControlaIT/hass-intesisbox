@@ -75,6 +75,9 @@ class IntesisBox(asyncio.Protocol):
         self._firmversion: str | None = None
         self._rssi: str | None = None
         self._eventLoop = loop
+        # Set by stop(). A stopped controller belongs to an entry that is
+        # being unloaded and must not be brought back by a late connect().
+        self._stopped = False
 
         # Receive buffer. TCP is a byte stream, so a single data_received() may
         # carry a partial line, several lines, or both.
@@ -284,7 +287,16 @@ class IntesisBox(asyncio.Protocol):
         self._send_update_callback()
 
     def connect(self):
-        """Public method for connecting to IntesisHome API."""
+        """Public method for connecting to IntesisHome API.
+
+        A no-op after stop(): on unload, stop() closes the socket, the entity
+        being removed is told the connection was lost, and its update calls
+        connect() a few seconds later. Reviving the controller then would
+        leave an orphan connection holding one of the device's two TCP slots.
+        """
+        if self._stopped:
+            _LOGGER.debug("connect() called on a stopped controller, ignoring")
+            return
         if self._connectionStatus == API_DISCONNECTED:
             self._connectionStatus = API_CONNECTING
             try:
@@ -317,6 +329,7 @@ class IntesisBox(asyncio.Protocol):
 
     def stop(self):
         """Public method for shutting down connectivity with the envisalink."""
+        self._stopped = True
         self._connectionStatus = API_DISCONNECTED
         self._transport.close()
 
