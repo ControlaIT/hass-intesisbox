@@ -438,3 +438,24 @@ async def test_stop_cancels_a_connect_still_in_flight(monkeypatch, port):
     assert not box.is_connected
     assert Emulator.connections == []
     await _reap_tasks()
+
+
+async def test_connect_after_stop_does_not_revive_the_controller(port):
+    """A stopped controller must stay stopped when something calls connect().
+
+    On unload, stop() closes the socket, connection_lost notifies the entity
+    being removed, and its update calls connect() a few seconds later. That
+    used to revive the controller, leaving an orphan connection that held
+    one of the device's two TCP slots and reconnected forever.
+    """
+    box = await _connect_and_handshake(port)
+    box.stop()
+    await _wait_until(lambda: Emulator.connections == [])
+
+    box.connect()
+    await asyncio.sleep(1.5)
+
+    assert not box.is_connected
+    assert Emulator.connections == []
+    assert all(task.done() for task in box._tasks.values())
+    await _reap_tasks()

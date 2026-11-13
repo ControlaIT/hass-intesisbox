@@ -299,18 +299,24 @@ class IntesisBox(asyncio.Protocol):
         return True
 
     def connect(self):
-        """Connect to the device, from any thread. A no-op while connected."""
-        if self.is_connected:
+        """Connect to the device, from any thread.
+
+        A no-op while connected, and after stop(): a stopped controller
+        belongs to an entry that is being unloaded, and reviving it would
+        leave an orphan connection holding one of the device's two TCP
+        slots. async_connect() is the explicit way to start one again.
+        """
+        if self.is_connected or self._stopped:
             return
         self._eventLoop.call_soon_threadsafe(self._ensure_connecting)
 
     def _ensure_connecting(self) -> None:
         """Start a connection attempt unless one is already under way.
 
-        Runs on the event loop, so its ordering against stop() is fixed.
+        Runs on the event loop, so its ordering against stop() is fixed:
+        a stop() queued before it wins.
         """
-        self._stopped = False
-        if self.is_connected or self._attempt_in_progress():
+        if self._stopped or self.is_connected or self._attempt_in_progress():
             return
         self._start_task("connect", self.async_connect())
 
