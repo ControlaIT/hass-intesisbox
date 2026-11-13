@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
@@ -16,6 +18,12 @@ PLATFORMS = ["climate"]
 # that is unreachable (powered off, Wi-Fi down, VPN down) must not hold setup
 # open: Home Assistant would otherwise cancel it and never retry (issue #79).
 SETUP_TIMEOUT = 30
+
+# Upper bound for the LIMITS replies after ID. The controller sends one query
+# per second, so a healthy device answers them all in about five seconds.
+LIMITS_TIMEOUT = 10
+
+_LOGGER = logging.getLogger(__name__)
 
 # The controller lives on the entry for the entry's lifetime. Every platform
 # reads it from here, so there is no hand-maintained dict in hass.data to keep
@@ -33,6 +41,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: IntesisBoxConfigEntry) -
         # whole setup with its own backoff, which creates a fresh controller.
         controller.stop()
         raise ConfigEntryNotReady(f"IntesisBox at {host} did not answer")
+
+    # The entity is built from the device's limits, which arrive a few seconds
+    # after ID. Without them the climate platform fails and Home Assistant
+    # retries it 30 s later, leaving the entity unavailable meanwhile.
+    if not await controller.async_wait_for_limits(LIMITS_TIMEOUT):
+        _LOGGER.debug(
+            "IntesisBox at %s did not report all its limits; continuing", host
+        )
 
     entry.runtime_data = controller
 

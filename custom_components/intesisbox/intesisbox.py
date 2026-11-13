@@ -36,6 +36,15 @@ FUNCTION_ERRCODE = "ERRCODE"
 
 NULL_VALUES = ["-32768", "32768"]
 
+# Limits queried on every connect, in order. The entity is built from them.
+INITIAL_LIMITS = (
+    FUNCTION_SETPOINT,
+    FUNCTION_FANSP,
+    FUNCTION_MODE,
+    FUNCTION_VANEUD,
+    FUNCTION_VANELR,
+)
+
 # A line with no terminator longer than this is discarded. The longest reply
 # the device sends is a LIMITS list, well under a hundred bytes.
 MAX_LINE_LENGTH = 1024
@@ -105,6 +114,12 @@ class IntesisBox(asyncio.Protocol):
 
         # Set once the device has answered ID on the current connection.
         self._connected = asyncio.Event()
+
+        # Set once every limit asked for on connect has been answered. The
+        # climate entity reads the limits when it is created, so setup waits
+        # for this instead of letting the platform fail and retry 30 s later.
+        self._limits_received: set[str] = set()
+        self._limits_ready = asyncio.Event()
 
         # Owned tasks by name, cancelled and replaced on every (re)connect.
         self._tasks: dict[str, asyncio.Task] = {}
@@ -298,6 +313,19 @@ class IntesisBox(asyncio.Protocol):
             return False
         return True
 
+    async def async_wait_for_limits(self, timeout: float) -> bool:
+        """Wait until every limit queried on connect has been answered.
+
+        Returns False on timeout, for a device that leaves a LIMITS query
+        unanswered; callers then carry on with whatever limits did arrive.
+        """
+        try:
+            async with asyncio.timeout(timeout):
+                await self._limits_ready.wait()
+        except TimeoutError:
+            return False
+        return True
+
     def connect(self):
         """Connect to the device, from any thread.
 
@@ -359,14 +387,7 @@ class IntesisBox(asyncio.Protocol):
 
     async def query_initial_state(self):
         """Fetch configuration from the device upon connection."""
-        cmds = [
-            "ID",
-            "LIMITS:SETPTEMP",
-            "LIMITS:FANSP",
-            "LIMITS:MODE",
-            "LIMITS:VANEUD",
-            "LIMITS:VANELR",
-        ]
+        cmds = ["ID", *(f"LIMITS:{function}" for function in INITIAL_LIMITS)]
         for cmd in cmds:
             self._write(cmd)
             await asyncio.sleep(1)
@@ -510,6 +531,10 @@ class IntesisBox(asyncio.Protocol):
             self._horizontal_vane_list = values
         else:
             return False
+
+        self._limits_received.add(function)
+        if self._limits_received.issuperset(INITIAL_LIMITS):
+            self._limits_ready.set()
 
         _LOGGER.debug(
             "Updated limits: setpoint=%s-%s fan=%s mode=%s vaneud=%s vanelr=%s",

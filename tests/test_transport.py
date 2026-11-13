@@ -459,3 +459,35 @@ async def test_connect_after_stop_does_not_revive_the_controller(port):
     assert Emulator.connections == []
     assert all(task.done() for task in box._tasks.values())
     await _reap_tasks()
+
+
+async def test_limits_are_ready_after_connecting(port):
+    """Every limit queried on connect is in place once the wait returns."""
+    box = intesisbox.IntesisBox("127.0.0.1", port, loop=asyncio.get_running_loop())
+    try:
+        assert await box.async_connect(timeout=15)
+        assert await box.async_wait_for_limits(timeout=10)
+        assert (box.min_setpoint, box.max_setpoint) == (16.0, 30.0)
+        assert box.fan_speed_list
+        assert box.operation_list
+        assert box.vane_vertical_list
+        assert box.vane_horizontal_list
+    finally:
+        await _shutdown(box)
+
+
+async def test_waiting_for_limits_gives_up_on_an_unanswered_query(port, monkeypatch):
+    """A device that never answers one LIMITS query must not hold setup."""
+    import tests.emulator as emulator
+
+    limits = dict(emulator.LIMITS)
+    del limits["VANELR"]
+    monkeypatch.setattr(emulator, "LIMITS", limits)
+    box = intesisbox.IntesisBox("127.0.0.1", port, loop=asyncio.get_running_loop())
+    try:
+        assert await box.async_connect(timeout=15)
+        assert await box.async_wait_for_limits(timeout=7) is False
+        assert box.operation_list
+        assert box.vane_horizontal_list == []
+    finally:
+        await _shutdown(box)

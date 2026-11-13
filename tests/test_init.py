@@ -45,6 +45,7 @@ class FakeController:
         self.horizontal_swing = None
         self.is_on = True
         self.stopped = False
+        self.limits_ready = True
         self._update_callbacks: list = []
 
     def connect(self) -> None:
@@ -53,6 +54,10 @@ class FakeController:
     async def async_connect(self, timeout: float = 30) -> bool:
         """Report whether the handshake succeeded."""
         return self.is_connected
+
+    async def async_wait_for_limits(self, timeout: float) -> bool:
+        """Report whether every limit arrived."""
+        return self.limits_ready
 
     def stop(self) -> None:
         """Record the shutdown."""
@@ -165,3 +170,13 @@ async def test_an_unreachable_device_retries_setup_instead_of_hanging(hass):
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert fake.stopped is True
     assert hass.states.get("climate.001dc9a2c911") is None
+
+
+async def test_missing_limits_do_not_block_setup(hass):
+    """A device that leaves a LIMITS query unanswered still sets up."""
+    fake = FakeController()
+    fake.limits_ready = False
+    entry = await _set_up(hass, fake, unique_id=MAC)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert hass.states.get("climate.001dc9a2c911") is not None
