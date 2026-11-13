@@ -50,6 +50,10 @@ class FakeController:
     def connect(self) -> None:
         """Already connected."""
 
+    async def async_connect(self, timeout: float = 30) -> bool:
+        """Report whether the handshake succeeded."""
+        return self.is_connected
+
     def stop(self) -> None:
         """Record the shutdown."""
         self.stopped = True
@@ -143,3 +147,20 @@ async def test_a_yaml_platform_keeps_its_configured_name(hass):
     state = hass.states.get("climate.lounge")
     assert state is not None
     assert state.attributes["friendly_name"] == "Lounge"
+
+
+async def test_an_unreachable_device_retries_setup_instead_of_hanging(hass):
+    """Setup gives up on a silent device and lets Home Assistant retry (#79)."""
+    fake = FakeController()
+    fake.is_connected = False
+    entry = MockConfigEntry(
+        domain=DOMAIN, title="192.0.2.10", data={CONF_HOST: "192.0.2.10"}
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.intesisbox.IntesisBox", return_value=fake):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert fake.stopped is True
+    assert hass.states.get("climate.001dc9a2c911") is None
